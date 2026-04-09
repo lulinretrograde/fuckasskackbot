@@ -1,1 +1,3 @@
-# idf-soldat
+# FuckAssKackBot
+
+Discord Bot und so
