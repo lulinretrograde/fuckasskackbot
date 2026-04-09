@@ -382,6 +382,10 @@ async fn spawn_loot_drop(
             let drop_id = crate::db::insert_loot_drop(
                 pool, guild_id, bot_ch, msg.id, expires_at, fish_id, coins, bonus_xp,
             ).await;
+            tracing::info!(
+                "loot drop spawned: guild={} channel={} message={} drop_id={}",
+                guild_id, bot_ch, msg.id, drop_id
+            );
 
             // auto-expire after 30 minutes
             let ctx_c  = ctx.clone();
@@ -425,6 +429,10 @@ pub async fn handle_loot_claim(
     let drop = match crate::db::get_loot_drop_by_message(pool, channel, msg_id).await {
         Some(d) => d,
         None => {
+            tracing::warn!(
+                "loot_claim: no unclaimed drop found for channel={} message={} (user={})",
+                channel, msg_id, claimer.id
+            );
             let _ = comp.create_response(ctx, CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
                     .content("Dieser Drop wurde bereits eingesammelt oder ist abgelaufen.")

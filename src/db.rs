@@ -455,6 +455,7 @@ pub async fn insert_loot_drop(
     .bind(bonus_xp)
     .execute(pool)
     .await
+    .map_err(|e| { tracing::error!("insert_loot_drop failed: {e}"); e })
     .map(|r| r.last_insert_rowid())
     .unwrap_or(0)
 }
@@ -500,6 +501,7 @@ pub async fn get_loot_drop_by_message(
     .bind(message_id.get() as i64)
     .fetch_optional(pool)
     .await
+    .map_err(|e| { tracing::error!("get_loot_drop_by_message(ch={}, msg={}) failed: {e}", channel_id, message_id); e })
     .ok()??;
 
     Some(LootDropRow {
