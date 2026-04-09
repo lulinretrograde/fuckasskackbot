@@ -513,6 +513,17 @@ pub async fn get_loot_drop_by_message(
     })
 }
 
+/// Returns true if the guild already has an unclaimed (active) loot drop.
+pub async fn has_active_loot_drop(pool: &SqlitePool, guild_id: GuildId) -> bool {
+    sqlx::query("SELECT id FROM loot_drops WHERE guild_id = ? AND claimed = 0 LIMIT 1")
+        .bind(guild_id.get() as i64)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+}
+
 /// Returns all unclaimed loot drops (for startup recovery).
 pub async fn get_pending_loot_drops(pool: &SqlitePool) -> Vec<LootDropRow> {
     let rows = sqlx::query(
@@ -885,15 +896,16 @@ pub async fn add_to_bank(pool: &SqlitePool, guild_id: GuildId, amount: i64) {
     if let Err(e) = r { tracing::error!("Bank-Einzahlung fehlgeschlagen: {e}"); }
 }
 
-/// Drains the bank to zero and returns what was in it.
+/// Drains the bank to zero and returns what was in it. Atomic — safe against concurrent robberies.
 pub async fn drain_bank(pool: &SqlitePool, guild_id: GuildId) -> i64 {
-    let amount = get_bank(pool, guild_id).await;
-    let r = sqlx::query("UPDATE bank SET coins = 0 WHERE guild_id = ?")
-        .bind(guild_id.get() as i64)
-        .execute(pool)
-        .await;
-    if let Err(e) = r { tracing::error!("Bank-Drain fehlgeschlagen: {e}"); }
-    amount
+    sqlx::query_scalar::<_, i64>(
+        "UPDATE bank SET coins = 0 WHERE guild_id = ? RETURNING coins",
+    )
+    .bind(guild_id.get() as i64)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None)
+    .unwrap_or(0)
 }
 
 // ── robbery jail ──────────────────────────────────────────────────────────────
@@ -993,7 +1005,7 @@ pub async fn record_invite(pool: &SqlitePool, guild_id: GuildId, user_id: UserId
 pub async fn add_coins(pool: &SqlitePool, guild_id: GuildId, user_id: UserId, amount: i64) -> i64 {
     sqlx::query_scalar::<_, i64>(
         "INSERT INTO economy (guild_id, user_id, coins) VALUES (?, ?, ?)
-         ON CONFLICT(guild_id, user_id) DO UPDATE SET coins = coins + excluded.coins
+         ON CONFLICT(guild_id, user_id) DO UPDATE SET coins = MAX(coins + excluded.coins, 0)
          RETURNING coins",
     )
     .bind(guild_id.get() as i64)

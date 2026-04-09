@@ -327,6 +327,11 @@ async fn spawn_loot_drop(
 ) {
     let guilds = crate::db::get_guilds_with_bot_channel(pool).await;
     for (guild_id, bot_ch) in guilds {
+        // Skip if there is already an unclaimed drop active for this guild.
+        if crate::db::has_active_loot_drop(pool, guild_id).await {
+            continue;
+        }
+
         let drop_token = format!("loot_{}_{}", guild_id, chrono::Utc::now().timestamp());
 
         let (tier_name, color, fish_id, coin_min, coin_max, bonus_xp) = {
@@ -484,4 +489,11 @@ pub async fn handle_loot_claim(
             )
             .components(vec![])
     )).await;
+
+    // Delete the message after 30 seconds so it doesn't linger
+    let ctx_del = ctx.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        let _ = channel.delete_message(&ctx_del, msg_id).await;
+    });
 }

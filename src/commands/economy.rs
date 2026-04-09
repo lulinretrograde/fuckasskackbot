@@ -371,6 +371,22 @@ pub async fn klauen(
         }
     }
 
+    // ── diebstahlschutz: auto-fail if victim has the protection item ──────────
+    if crate::db::has_active_shop_item(&ctx.data().db, guild_id, opfer.id, "diebstahlschutz").await {
+        crate::db::consume_shop_item(&ctx.data().db, guild_id, opfer.id, "diebstahlschutz").await;
+        ctx.send(poise::CreateReply::default().embed(
+            CreateEmbed::new()
+                .author(serenity::CreateEmbedAuthor::new(dieb.tag()).icon_url(dieb.face()))
+                .title("🔒 Diebstahlschutz aktiv!")
+                .description(format!(
+                    "<@{}> hat einen **Diebstahlschutz** aktiv — dein Diebstahl wurde automatisch blockiert!",
+                    opfer.id
+                ))
+                .color(0xED4245u32),
+        )).await?;
+        return Ok(());
+    }
+
     // ── time-based catch probability ──────────────────────────────────────────
     let hour = chrono::Local::now().hour();
     let catch_pct: u32 = if hour >= 22 || hour < 6 {
