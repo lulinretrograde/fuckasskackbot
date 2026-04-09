@@ -1801,7 +1801,7 @@ async fn handle_giveaway_join(
         return;
     }
 
-    // Ticket price check & deduction
+    // Ticket price check
     if giveaway.ticket_price > 0 {
         let balance = crate::db::get_coins(pool, giveaway.guild_id, user_id).await;
         if balance < giveaway.ticket_price {
@@ -1815,10 +1815,13 @@ async fn handle_giveaway_join(
             )).await.ok();
             return;
         }
-        crate::db::add_coins(pool, giveaway.guild_id, user_id, -giveaway.ticket_price).await;
     }
 
+    // Enter first, then deduct — so coins are never lost if the DB entry fails.
     crate::db::enter_giveaway(pool, giveaway.id, user_id).await;
+    if giveaway.ticket_price > 0 {
+        crate::db::add_coins(pool, giveaway.guild_id, user_id, -giveaway.ticket_price).await;
+    }
     let new_count = crate::db::get_giveaway_entry_count(pool, giveaway.id).await;
 
     // Update the participant count on the embed
