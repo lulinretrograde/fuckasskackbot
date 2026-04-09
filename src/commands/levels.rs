@@ -103,7 +103,7 @@ pub async fn leaderboard(ctx: Context<'_>) -> Result<(), Error> {
         let level = level_from_xp(*xp);
         let prefix = medals.get(i).copied().unwrap_or("🔹");
         lines.push(format!(
-            "{} **#{}** <@{}> — Level {} · {} XP",
+            "{} **#{}** <@{}>: Level {} · {} XP",
             prefix,
             i + 1,
             user_id,

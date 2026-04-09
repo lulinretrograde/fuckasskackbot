@@ -500,7 +500,7 @@ pub async fn warnings(
     let lines: Vec<String> = list
         .iter()
         .enumerate()
-        .map(|(i, (moderator, reason))| format!("**{}**. <@{}> — {}", i + 1, moderator, reason))
+        .map(|(i, (moderator, reason))| format!("**{}**. <@{}>: {}", i + 1, moderator, reason))
         .collect();
 
     ctx.send(

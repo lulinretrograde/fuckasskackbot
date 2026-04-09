@@ -23,6 +23,6 @@ pub use levels::{leaderboard, level, level_coins_migrate, reset_xp, scan_xp};
 pub use moderation::{ban, clearwarnings, jail, kick, mute, purge, unban, unjail, unmute, warn, warnings};
 pub use setup::{baserole, bot_channel, setup_jail, setup_logs};
 pub use shop::{kaufen, laden, prestige};
-pub use utility::{stealemoji, stealsticker};
+pub use utility::{bug, stealemoji, stealsticker, ticket_reward};
 pub use antinuke::antinuke;
 pub use welcome::welcome_channel;

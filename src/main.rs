@@ -12,7 +12,7 @@ use poise::serenity_prelude as serenity;
 use tokio::sync::Mutex;
 
 use config::{
-    InviteCache, JoinTracker, LockdownState, LogConfigs,
+    AwaitingTicketReply, BugCooldowns, InviteCache, JoinTracker, LockdownState, LogConfigs,
     MessageCache, NukeCounters, RaidCounters, VoiceSessions, XpCooldowns,
 };
 
@@ -34,12 +34,30 @@ pub struct AppData {
     pub nuke_counters:     NukeCounters,      // anti-nuke action counters
     pub raid_counters:     RaidCounters,      // anti-nuke raid join counters
     pub lockdown_state:    LockdownState,     // guilds currently in lockdown
+    pub bug_cooldowns:          BugCooldowns,          // ephemeral, /bug rate limiting
+    pub awaiting_ticket_reply:  AwaitingTicketReply,   // ephemeral, ticket DM reply state
 }
 
 // ── entry point ───────────────────────────────────────────────────────────────
 
+/// Binds a TCP socket on loopback as an exclusive instance lock.
+/// If another instance is already running (port taken), waits until it exits.
+/// The returned listener must stay alive for the entire process lifetime:
+/// dropping it releases the lock and lets the next instance proceed.
+fn acquire_instance_lock() -> std::net::TcpListener {
+    loop {
+        match std::net::TcpListener::bind("127.0.0.1:27016") {
+            Ok(l) => return l,
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(500)),
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() {
+    // Must be held alive until process exit: drop = lock released.
+    let _instance_lock = acquire_instance_lock();
+
     dotenvy::dotenv().ok();
 
     tracing_subscriber::fmt()
@@ -109,6 +127,8 @@ async fn main() {
                 commands::ueberweisung(),
                 commands::level_coins_migrate(),
                 commands::antinuke(),
+                commands::bug(),
+                commands::ticket_reward(),
             ],
             event_handler: |ctx, event, framework, data| {
                 Box::pin(events::handle(ctx, event, framework, data))
@@ -137,7 +157,7 @@ async fn main() {
                     return Ok(true);
                 }
 
-                // Wrong channel — send ephemeral notice and block
+                // Wrong channel: send ephemeral notice and block
                 let _ = ctx.send(
                     poise::CreateReply::default()
                         .content(format!(
@@ -155,9 +175,7 @@ async fn main() {
             Box::pin(async move {
                 tracing::info!("Logged in as {}", _ready.user.name);
 
-                ctx.set_activity(Some(serenity::ActivityData::playing(
-                    concat!("Version: ", env!("CARGO_PKG_VERSION")),
-                )));
+                ctx.set_activity(Some(serenity::ActivityData::watching("Bot kaputt? -> /bug")));
 
                 poise::builtins::register_in_guild(
                     ctx,
@@ -254,6 +272,8 @@ async fn main() {
                     nuke_counters:      Arc::new(Mutex::new(HashMap::new())),
                     raid_counters:      Arc::new(Mutex::new(HashMap::new())),
                     lockdown_state:     Arc::new(Mutex::new(HashMap::new())),
+                    bug_cooldowns:          Arc::new(Mutex::new(HashMap::new())),
+                    awaiting_ticket_reply:  Arc::new(Mutex::new(HashMap::new())),
                 })
             })
         })

@@ -150,7 +150,7 @@ pub async fn finish_giveaway(
             id, prize,
         ),
         None => format!(
-            "Das Gewinnspiel für **{}** ist beendet — niemand hat teilgenommen.",
+            "Das Gewinnspiel für **{}** ist beendet: niemand hat teilgenommen.",
             prize,
         ),
     };

@@ -2,7 +2,7 @@ use rand::Rng;
 
 use poise::serenity_prelude as serenity;
 use serenity::{
-    CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter, CreateMessage,
+    CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter, CreateMessage, EditMessage,
 };
 
 use crate::{Context, Error};
@@ -72,7 +72,7 @@ pub async fn laden(ctx: Context<'_>) -> Result<(), Error> {
         let owned = crate::db::get_shop_item_qty(&ctx.data().db, guild_id, user_id, item.id).await;
         let owned_str = if owned > 0 { format!(" *({}x vorhanden)*", owned) } else { String::new() };
         lines.push(format!(
-            "{} **{}** — {} Coins{}\n> {}",
+            "{} **{}**: {} Coins{}\n> {}",
             item.emoji, item.name, item.price, owned_str, item.description
         ));
     }
@@ -290,11 +290,25 @@ pub async fn restore_loot_drops(ctx: serenity::Context, pool: sqlx::SqlitePool) 
     let pending = crate::db::get_pending_loot_drops(&pool).await;
     for drop in pending {
         if drop.expires_at <= now {
-            // already expired — delete the Discord message and the DB row
-            let _ = drop.channel_id.delete_message(&ctx, drop.message_id).await;
+            // already expired: edit message to remove button, then purge the DB row
+            let edited = drop.channel_id.edit_message(
+                &ctx,
+                drop.message_id,
+                EditMessage::new()
+                    .embed(
+                        CreateEmbed::new()
+                            .title("📦 Loot-Drop: Abgelaufen")
+                            .description("Dieser Drop ist abgelaufen. Niemand hat ihn rechtzeitig eingesammelt.")
+                            .color(0x99AAB5u32),
+                    )
+                    .components(vec![]),
+            ).await;
+            if edited.is_err() {
+                let _ = drop.channel_id.delete_message(&ctx, drop.message_id).await;
+            }
             crate::db::delete_loot_drop_row(&pool, drop.id).await;
         } else {
-            // still live — spawn a cleanup timer for the remaining time
+            // still live: spawn a cleanup timer for the remaining time
             let remaining = (drop.expires_at - now) as u64;
             let ctx_c  = ctx.clone();
             let pool_c = pool.clone();
@@ -313,10 +327,26 @@ async fn expire_loot_drop(
     channel_id: serenity::ChannelId,
     message_id: serenity::MessageId,
 ) {
-    // Try to atomically claim it; if it was already claimed by a user, skip deletion
+    // Try to atomically claim it; if already claimed by a user, leave the message alone.
     let won = crate::db::claim_loot_drop(pool, drop_id).await;
     if won {
-        let _ = channel_id.delete_message(ctx, message_id).await;
+        // Nobody claimed it: edit the message to remove the button so users can't click
+        // a dead drop. Fall back to deletion if the edit fails.
+        let edited = channel_id.edit_message(
+            ctx,
+            message_id,
+            EditMessage::new()
+                .embed(
+                    CreateEmbed::new()
+                        .title("📦 Loot-Drop: Abgelaufen")
+                        .description("Dieser Drop ist abgelaufen. Niemand hat ihn rechtzeitig eingesammelt.")
+                        .color(0x99AAB5u32),
+                )
+                .components(vec![]),
+        ).await;
+        if edited.is_err() {
+            let _ = channel_id.delete_message(ctx, message_id).await;
+        }
     }
     crate::db::delete_loot_drop_row(pool, drop_id).await;
 }
@@ -369,10 +399,10 @@ async fn spawn_loot_drop(
         let msg = bot_ch.send_message(ctx, CreateMessage::new()
             .embed(
                 CreateEmbed::new()
-                    .title(format!("📦 Loot-Drop — {}", tier_name))
+                    .title(format!("📦 Loot-Drop: {}", tier_name))
                     .description(&desc)
                     .color(color)
-                    .footer(CreateEmbedFooter::new("Nur der Erste bekommt den Drop — läuft in 30 Minuten ab.")),
+                    .footer(CreateEmbedFooter::new("Nur der Erste bekommt den Drop: läuft in 30 Minuten ab.")),
             )
             .components(vec![CreateActionRow::Buttons(vec![claim_btn])])
         ).await;
@@ -442,7 +472,7 @@ pub async fn handle_loot_claim(
         }
     };
 
-    // Atomically claim it — prevents race if two users click at once
+    // Atomically claim it: prevents race if two users click at once
     if !crate::db::claim_loot_drop(pool, drop.id).await {
         let _ = comp.create_response(ctx, CreateInteractionResponse::Message(
             CreateInteractionResponseMessage::new()
@@ -487,7 +517,7 @@ pub async fn handle_loot_claim(
         CreateInteractionResponseMessage::new()
             .embed(
                 CreateEmbed::new()
-                    .title("📦 Loot-Drop — Eingesammelt!")
+                    .title("📦 Loot-Drop: Eingesammelt!")
                     .description(format!(
                         "<@{}> hat den Drop eingesammelt!\n\n**{}** + **{} Coins**{}",
                         claimer.id, fish_name, coins,

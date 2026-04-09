@@ -3,7 +3,9 @@ use std::time::Instant;
 
 use poise::serenity_prelude as serenity;
 use serenity::{
-    ChannelId, ChannelType, CreateEmbed, CreateEmbedFooter, CreateMessage, GuildId, Timestamp,
+    ChannelId, ChannelType, CreateActionRow, CreateButton, CreateChannel, CreateEmbed,
+    CreateEmbedFooter, CreateMessage, EditMessage, GuildId, PermissionOverwrite,
+    PermissionOverwriteType, Permissions, Timestamp,
 };
 
 use crate::config::ActionKind;
@@ -66,10 +68,22 @@ pub async fn handle(
         // Cache incoming messages for delete logs + XP
         serenity::FullEvent::Message { new_message } => {
             if !new_message.author.bot {
+                // Ticket reply: owner sends a DM while awaiting a reply prompt
+                if new_message.guild_id.is_none()
+                    && new_message.author.id.get() == crate::commands::utility::OWNER_ID
+                    && !new_message.content.is_empty()
+                {
+                    let pending = data.awaiting_ticket_reply.lock().await.remove(&new_message.author.id);
+                    if let Some((ticket_id, action)) = pending {
+                        handle_ticket_reply(ctx, data, new_message, ticket_id, action).await;
+                        return Ok(());
+                    }
+                }
+
                 let has_content = !new_message.content.is_empty();
                 let has_attachments = !new_message.attachments.is_empty();
 
-                // Persist to DB (for delete/edit logs — survives restarts, stores attachments)
+                // Persist to DB (for delete/edit logs: survives restarts, stores attachments)
                 if let Some(guild_id) = new_message.guild_id {
                     if has_content || has_attachments {
                         let att_names: Vec<String> = new_message.attachments.iter()
@@ -344,6 +358,9 @@ pub async fn handle(
                     crate::commands::shop::handle_loot_claim(
                         ctx, &data.db, comp,
                     ).await;
+                } else if id.starts_with("tr_") || id.starts_with("td_") || id.starts_with("tc_")
+                       || id.starts_with("tk_") || id.starts_with("tcr_") {
+                    handle_ticket_button(ctx, data, comp).await;
                 }
             }
         }
@@ -738,27 +755,27 @@ async fn member_join_log(
     let mut warnings: Vec<String> = Vec::new();
 
     if age_days < 1 {
-        warnings.push("🚨 **Konto weniger als 24 Stunden alt** — sehr verdächtig".to_string());
+        warnings.push("🚨 **Konto weniger als 24 Stunden alt**: sehr verdächtig".to_string());
     } else if age_days < 7 {
-        warnings.push(format!("⚠️ **Konto erst {} Tage alt** — verdächtig", age_days));
+        warnings.push(format!("⚠️ **Konto erst {} Tage alt**: verdächtig", age_days));
     } else if age_days < 30 {
-        warnings.push(format!("⚠️ **Konto erst {} Tage alt** — neues Konto", age_days));
+        warnings.push(format!("⚠️ **Konto erst {} Tage alt**: neues Konto", age_days));
     }
 
     if user.avatar.is_none() {
-        warnings.push("⚠️ **Kein Profilbild** — Standard-Avatar".to_string());
+        warnings.push("⚠️ **Kein Profilbild**: Standard-Avatar".to_string());
     }
 
     if is_raid {
         warnings.push(format!(
-            "🚨 **Möglicher Raid** — {} Beitritte in unter {} Sekunden",
+            "🚨 **Möglicher Raid**: {} Beitritte in unter {} Sekunden",
             RAID_JOINS, RAID_WINDOW_SECS
         ));
     }
 
     // Additional bot suspicion
     if user.discriminator.is_none() && age_days < 7 && user.avatar.is_none() {
-        warnings.push("🚨 **Hohes Risiko** — Neues Konto ohne Avatar (möglicher Bot/Alt)".to_string());
+        warnings.push("🚨 **Hohes Risiko**: Neues Konto ohne Avatar (möglicher Bot/Alt)".to_string());
     }
 
     let color = if warnings.iter().any(|w| w.contains("🚨")) {
@@ -1675,7 +1692,7 @@ fn format_duration(secs: i64) -> String {
 
 // ── giveaway helpers ──────────────────────────────────────────────────────────
 
-/// Called from GuildCreate — reschedules any giveaways that survived a restart.
+/// Called from GuildCreate: reschedules any giveaways that survived a restart.
 /// Uses a static flag so it only runs once even if multiple guilds fire GuildCreate.
 async fn reschedule_giveaways(ctx: &serenity::Context, data: &AppData) {
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -1817,7 +1834,7 @@ async fn handle_giveaway_join(
         }
     }
 
-    // Enter first, then deduct — so coins are never lost if the DB entry fails.
+    // Enter first, then deduct: so coins are never lost if the DB entry fails.
     crate::db::enter_giveaway(pool, giveaway.id, user_id).await;
     if giveaway.ticket_price > 0 {
         crate::db::add_coins(pool, giveaway.guild_id, user_id, -giveaway.ticket_price).await;
@@ -1881,7 +1898,7 @@ async fn voice_xp_track(
             // left VC
             data.voice_sessions.lock().await.remove(&(guild_id, user_id));
         }
-        _ => {} // move between channels or mute/deaf changes — keep session
+        _ => {} // move between channels or mute/deaf changes: keep session
     }
 }
 
@@ -1925,5 +1942,370 @@ async fn antinuke_event(
 
     if let Some(entry) = logs.entries.first() {
         crate::antinuke::record_action(ctx, data, guild_id, entry.user_id, kind).await;
+    }
+}
+
+// ── ticket system ─────────────────────────────────────────────────────────────
+
+async fn handle_ticket_button(
+    ctx:  &serenity::Context,
+    data: &AppData,
+    comp: &serenity::ComponentInteraction,
+) {
+    use serenity::{CreateInteractionResponse, CreateInteractionResponseMessage};
+    use crate::config::TicketAction;
+
+    let id = comp.data.custom_id.as_str();
+
+    // Parse prefix and ticket_id
+    let (prefix, ticket_id_str) = if let Some(s) = id.strip_prefix("tcr_") {
+        ("tcr", s)
+    } else if let Some(s) = id.strip_prefix("tc_") {
+        ("tc", s)
+    } else if let Some(s) = id.strip_prefix("tr_") {
+        ("tr", s)
+    } else if let Some(s) = id.strip_prefix("td_") {
+        ("td", s)
+    } else if let Some(s) = id.strip_prefix("tk_") {
+        ("tk", s)
+    } else {
+        return;
+    };
+
+    let Ok(ticket_id) = ticket_id_str.parse::<i64>() else { return };
+
+    match prefix {
+        // ── Resolve (from DM) ────────────────────────────────────────────────
+        "tr" => {
+            // Update embed to show waiting state, remove buttons
+            let _ = comp.create_response(ctx, CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .embed(CreateEmbed::new()
+                        .title(format!("🐛 Ticket #{}: Warte auf Antwort", ticket_id))
+                        .description("Antworte auf diese DM mit deiner Nachricht für den Reporter.")
+                        .color(0xFEE75Cu32))
+                    .components(vec![]),
+            )).await;
+
+            data.awaiting_ticket_reply.lock().await
+                .insert(comp.user.id, (ticket_id, TicketAction::Resolve));
+        }
+
+        // ── Decline (from DM) ────────────────────────────────────────────────
+        "td" => {
+            let _ = comp.create_response(ctx, CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .embed(CreateEmbed::new()
+                        .title(format!("🐛 Ticket #{}: Warte auf Antwort", ticket_id))
+                        .description("Antworte auf diese DM mit deiner Ablehnungsbegründung für den Reporter.")
+                        .color(0xED4245u32))
+                    .components(vec![]),
+            )).await;
+
+            data.awaiting_ticket_reply.lock().await
+                .insert(comp.user.id, (ticket_id, TicketAction::Decline));
+        }
+
+        // ── Create channel (from DM) ─────────────────────────────────────────
+        "tc" => {
+            let Some(ticket) = crate::db::get_ticket(&data.db, ticket_id).await else {
+                let _ = comp.create_response(ctx, CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new().content("❌ Ticket nicht gefunden.").ephemeral(true),
+                )).await;
+                return;
+            };
+
+            if ticket.guild_id == 0 {
+                let _ = comp.create_response(ctx, CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .content("❌ Kein Server zugeordnet: Kanal kann nicht erstellt werden.")
+                        .ephemeral(true),
+                )).await;
+                return;
+            }
+
+            let guild_id  = GuildId::new(ticket.guild_id as u64);
+            let reporter  = serenity::UserId::new(ticket.reporter_id as u64);
+            let owner_uid = serenity::UserId::new(crate::commands::utility::OWNER_ID);
+
+            // @everyone role ID == guild ID in Discord
+            let everyone_role = serenity::RoleId::new(ticket.guild_id as u64);
+
+            let channel_name = format!("ticket-{}", ticket_id);
+
+            let perms = vec![
+                PermissionOverwrite {
+                    allow: Permissions::empty(),
+                    deny:  Permissions::VIEW_CHANNEL,
+                    kind:  PermissionOverwriteType::Role(everyone_role),
+                },
+                PermissionOverwrite {
+                    allow: Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES | Permissions::READ_MESSAGE_HISTORY,
+                    deny:  Permissions::empty(),
+                    kind:  PermissionOverwriteType::Member(owner_uid),
+                },
+                PermissionOverwrite {
+                    allow: Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES | Permissions::READ_MESSAGE_HISTORY,
+                    deny:  Permissions::empty(),
+                    kind:  PermissionOverwriteType::Member(reporter),
+                },
+            ];
+
+            let ch = match guild_id.create_channel(ctx, CreateChannel::new(&channel_name)
+                .kind(ChannelType::Text)
+                .permissions(perms)
+                .topic(format!("Bug-Ticket #{} von <@{}>", ticket_id, reporter))
+            ).await {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = comp.create_response(ctx, CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .content(format!("❌ Kanal konnte nicht erstellt werden: {}", e))
+                            .ephemeral(true),
+                    )).await;
+                    return;
+                }
+            };
+
+            // Send control message in the new channel
+            let channel_msg = ch.send_message(ctx, CreateMessage::new()
+                .content(format!("<@{}> <@{}>", owner_uid, reporter))
+                .embed(CreateEmbed::new()
+                    .title(format!("🐛 Ticket #{}", ticket_id))
+                    .description(&ticket.description)
+                    .field("Reporter", format!("<@{}>", reporter), true)
+                    .field("Belohnung bei Erledigung", format!("{} Coins", ticket.reward), true)
+                    .color(0xFEE75Cu32))
+                .components(vec![CreateActionRow::Buttons(vec![
+                    CreateButton::new(format!("tk_{}", ticket_id))
+                        .label("🔒 Schließen")
+                        .style(serenity::ButtonStyle::Secondary),
+                    CreateButton::new(format!("tcr_{}", ticket_id))
+                        .label(format!("✅ Schließen + Erledigt ({} Coins)", ticket.reward))
+                        .style(serenity::ButtonStyle::Success),
+                ])])
+            ).await;
+
+            let ch_msg_id = channel_msg.as_ref().map(|m| m.id.get() as i64).unwrap_or(0);
+            crate::db::update_ticket_channel(&data.db, ticket_id, ch.id.get() as i64).await;
+            let _ = ch_msg_id; // stored in ticket if needed later
+
+            // Edit owner DM to show channel was created
+            let _ = comp.create_response(ctx, CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .embed(CreateEmbed::new()
+                        .title(format!("🐛 Ticket #{}: Kanal erstellt", ticket_id))
+                        .description(&ticket.description)
+                        .field("Kanal", format!("<#{}>", ch.id), true)
+                        .field("Reporter", format!("<@{}>", reporter), true)
+                        .field("Status", "💬 Kanal offen", true)
+                        .color(0x5865F2u32))
+                    .components(vec![]),
+            )).await;
+
+            // DM the reporter
+            if let Ok(dm) = reporter.create_dm_channel(ctx).await {
+                let _ = dm.send_message(ctx, CreateMessage::new().embed(
+                    CreateEmbed::new()
+                        .title("💬 Ticket-Kanal erstellt")
+                        .description(format!(
+                            "Für dein Bug-Ticket #{} wurde ein privater Kanal erstellt: <#{}>.\n\
+                            Dort kannst du direkt mit dem Entwickler kommunizieren.",
+                            ticket_id, ch.id
+                        ))
+                        .color(0x5865F2u32),
+                )).await;
+            }
+        }
+
+        // ── Close channel (no resolve) ───────────────────────────────────────
+        "tk" => {
+            let Some(ticket) = crate::db::get_ticket(&data.db, ticket_id).await else { return };
+            let reporter = serenity::UserId::new(ticket.reporter_id as u64);
+
+            // Respond first before deleting the channel
+            let _ = comp.create_response(ctx, CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .embed(CreateEmbed::new()
+                        .title("🔒 Kanal wird geschlossen...")
+                        .color(0x99AAB5u32))
+                    .components(vec![]),
+            )).await;
+
+            crate::db::update_ticket_status(&data.db, ticket_id, "closed").await;
+
+            // DM reporter
+            if let Ok(dm) = reporter.create_dm_channel(ctx).await {
+                let _ = dm.send_message(ctx, CreateMessage::new().embed(
+                    CreateEmbed::new()
+                        .title(format!("🔒 Ticket #{} geschlossen", ticket_id))
+                        .description("Dein Ticket wurde vom Entwickler geschlossen.")
+                        .color(0x99AAB5u32),
+                )).await;
+            }
+
+            if let Some(ch_id) = ticket.ticket_channel_id {
+                let _ = serenity::ChannelId::new(ch_id as u64).delete(ctx).await;
+            }
+        }
+
+        // ── Close channel + resolve ──────────────────────────────────────────
+        "tcr" => {
+            // Edit message to waiting state, then wait for DM reply
+            let _ = comp.create_response(ctx, CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .embed(CreateEmbed::new()
+                        .title(format!("🐛 Ticket #{}: Warte auf Antwort", ticket_id))
+                        .description("Antworte per DM auf den Bot mit deiner Nachricht für den Reporter, dann wird der Kanal geschlossen.")
+                        .color(0x57F287u32))
+                    .components(vec![]),
+            )).await;
+
+            data.awaiting_ticket_reply.lock().await
+                .insert(comp.user.id, (ticket_id, TicketAction::ChannelCloseResolve));
+
+            // Ping owner in DM so they know to reply there
+            let owner = serenity::UserId::new(crate::commands::utility::OWNER_ID);
+            if let Ok(dm) = owner.create_dm_channel(ctx).await {
+                let _ = dm.send_message(ctx, CreateMessage::new()
+                    .content(format!("Antworte hier mit deiner Nachricht für den Reporter (Ticket #{}):", ticket_id))
+                ).await;
+            }
+        }
+
+        _ => {}
+    }
+}
+
+/// Called when the owner replies to a DM while in awaiting_ticket_reply state.
+async fn handle_ticket_reply(
+    ctx:       &serenity::Context,
+    data:      &AppData,
+    msg:       &serenity::Message,
+    ticket_id: i64,
+    action:    crate::config::TicketAction,
+) {
+    use crate::config::TicketAction;
+
+    let Some(ticket) = crate::db::get_ticket(&data.db, ticket_id).await else {
+        let _ = msg.reply(ctx, "❌ Ticket nicht gefunden.").await;
+        return;
+    };
+
+    let reporter     = serenity::UserId::new(ticket.reporter_id as u64);
+    let reply_text   = &msg.content;
+
+    // Helper: edit the owner DM embed to reflect final status
+    let edit_owner_dm = |title: &str, status_label: &str, color: u32| {
+        let dm_ch  = ticket.owner_dm_channel_id.map(|v| ChannelId::new(v as u64));
+        let dm_msg = ticket.owner_dm_message_id.map(|v| serenity::MessageId::new(v as u64));
+        let description = ticket.description.clone();
+        let reporter_id = ticket.reporter_id;
+        let t = title.to_string();
+        let s = status_label.to_string();
+        (dm_ch, dm_msg, description, reporter_id, t, s, color)
+    };
+
+    match action {
+        TicketAction::Resolve => {
+            if ticket.guild_id != 0 {
+                crate::db::add_coins(
+                    &data.db,
+                    GuildId::new(ticket.guild_id as u64),
+                    reporter,
+                    ticket.reward,
+                ).await;
+            }
+
+            if let Ok(dm) = reporter.create_dm_channel(ctx).await {
+                let _ = dm.send_message(ctx, CreateMessage::new().embed(
+                    CreateEmbed::new()
+                        .title(format!("✅ Ticket #{}: Erledigt!", ticket_id))
+                        .description(format!("**Nachricht vom Entwickler:**\n{}", reply_text))
+                        .field("Belohnung", format!("+{} Coins", ticket.reward), false)
+                        .color(0x57F287u32),
+                )).await;
+            }
+
+            crate::db::update_ticket_status(&data.db, ticket_id, "resolved").await;
+
+            let (dm_ch, dm_msg, desc, rid, ..) = edit_owner_dm("", "", 0);
+            if let (Some(ch), Some(mid)) = (dm_ch, dm_msg) {
+                let _ = ch.edit_message(ctx, mid, EditMessage::new()
+                    .embed(CreateEmbed::new()
+                        .title(format!("✅ Ticket #{}: Erledigt", ticket_id))
+                        .description(desc)
+                        .field("Reporter", format!("<@{}>", rid), true)
+                        .field("Status", "✅ Erledigt", true)
+                        .color(0x57F287u32))
+                    .components(vec![]),
+                ).await;
+            }
+
+            let _ = msg.reply(ctx, format!(
+                "✅ Ticket #{} erledigt. **{} Coins** an <@{}> gutgeschrieben.",
+                ticket_id, ticket.reward, ticket.reporter_id,
+            )).await;
+        }
+
+        TicketAction::Decline => {
+            if let Ok(dm) = reporter.create_dm_channel(ctx).await {
+                let _ = dm.send_message(ctx, CreateMessage::new().embed(
+                    CreateEmbed::new()
+                        .title(format!("❌ Ticket #{}: Abgelehnt", ticket_id))
+                        .description(format!("**Nachricht vom Entwickler:**\n{}", reply_text))
+                        .color(0xED4245u32),
+                )).await;
+            }
+
+            crate::db::update_ticket_status(&data.db, ticket_id, "declined").await;
+
+            let (dm_ch, dm_msg, desc, rid, ..) = edit_owner_dm("", "", 0);
+            if let (Some(ch), Some(mid)) = (dm_ch, dm_msg) {
+                let _ = ch.edit_message(ctx, mid, EditMessage::new()
+                    .embed(CreateEmbed::new()
+                        .title(format!("❌ Ticket #{}: Abgelehnt", ticket_id))
+                        .description(desc)
+                        .field("Reporter", format!("<@{}>", rid), true)
+                        .field("Status", "❌ Abgelehnt", true)
+                        .color(0xED4245u32))
+                    .components(vec![]),
+                ).await;
+            }
+
+            let _ = msg.reply(ctx, format!("✅ Ticket #{} abgelehnt.", ticket_id)).await;
+        }
+
+        TicketAction::ChannelCloseResolve => {
+            if ticket.guild_id != 0 {
+                crate::db::add_coins(
+                    &data.db,
+                    GuildId::new(ticket.guild_id as u64),
+                    reporter,
+                    ticket.reward,
+                ).await;
+            }
+
+            if let Ok(dm) = reporter.create_dm_channel(ctx).await {
+                let _ = dm.send_message(ctx, CreateMessage::new().embed(
+                    CreateEmbed::new()
+                        .title(format!("✅ Ticket #{}: Erledigt!", ticket_id))
+                        .description(format!("**Nachricht vom Entwickler:**\n{}", reply_text))
+                        .field("Belohnung", format!("+{} Coins", ticket.reward), false)
+                        .color(0x57F287u32),
+                )).await;
+            }
+
+            crate::db::update_ticket_status(&data.db, ticket_id, "resolved").await;
+
+            if let Some(ch_id) = ticket.ticket_channel_id {
+                let _ = serenity::ChannelId::new(ch_id as u64).delete(ctx).await;
+            }
+
+            let _ = msg.reply(ctx, format!(
+                "✅ Ticket #{} erledigt, Kanal geschlossen. **{} Coins** an <@{}> gutgeschrieben.",
+                ticket_id, ticket.reward, ticket.reporter_id,
+            )).await;
+        }
     }
 }

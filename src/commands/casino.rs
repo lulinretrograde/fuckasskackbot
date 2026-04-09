@@ -201,7 +201,7 @@ fn spin_reel() -> usize {
     0
 }
 
-/// Einarmiger Bandit — drei Rollen drehen sich. Treffer = Münzen!
+/// Einarmiger Bandit: drei Rollen drehen sich. Treffer = Münzen!
 #[poise::command(slash_command, guild_only, rename = "slots")]
 pub async fn slots(
     ctx: Context<'_>,
@@ -244,7 +244,7 @@ pub async fn slots(
 
     ctx.send(poise::CreateReply::default().embed(
         CreateEmbed::new()
-            .title(format!("🎰 Slots — {}", title))
+            .title(format!("🎰 Slots: {}", title))
             .description(desc)
             .color(color)
             .footer(CreateEmbedFooter::new(format!("Einsatz: {} Coins", einsatz))),
@@ -280,7 +280,7 @@ pub async fn blackjack(
         let (new_bal, profit, bonus) = pay_win(pool, guild_id, user_id, bet, 2.5).await;
         ctx.send(poise::CreateReply::default().embed(
             CreateEmbed::new()
-                .title("🃏 Blackjack — NATURAL BLACKJACK! 🎉")
+                .title("🃏 Blackjack: NATURAL BLACKJACK! 🎉")
                 .description(format!(
                     "Deine Hand: **{}** ({})\nDealer: **{}** ({})\n\n**+{} Coins** (2.5×)!{}\nKontostand: **{} Coins**",
                     hand_str(&player), hand_total(&player),
@@ -346,9 +346,9 @@ pub async fn blackjack(
                     CreateInteractionResponseMessage::new()
                         .components(vec![])
                         .embed(CreateEmbed::new()
-                            .title("🃏 Blackjack — Bust!")
+                            .title("🃏 Blackjack: Bust!")
                             .description(format!(
-                                "Deine Hand: **{}** (**{}** — BUST)\nDealer: **{}** ({})",
+                                "Deine Hand: **{}** (**{}**: BUST)\nDealer: **{}** ({})",
                                 hand_str(&player), hand_total(&player),
                                 hand_str(&dealer), hand_total(&dealer),
                             ))
@@ -358,7 +358,7 @@ pub async fn blackjack(
                 let (new_bal, consolation) = pay_loss(pool, guild_id, user_id, bet).await;
                 msg.channel_id.send_message(ctx.http(), CreateMessage::new().embed(
                     CreateEmbed::new()
-                        .description(format!("**-{} Coins** — Bust!\nKontostand: **{} Coins**{}", bet, new_bal, consolation_note(consolation)))
+                        .description(format!("**-{} Coins**: Bust!\nKontostand: **{} Coins**{}", bet, new_bal, consolation_note(consolation)))
                         .color(0xED4245u32),
                 )).await.ok();
                 return Ok(());
@@ -368,7 +368,7 @@ pub async fn blackjack(
                 // After double: auto-stand
                 interaction.create_response(ctx.http(), CreateInteractionResponse::UpdateMessage(
                     CreateInteractionResponseMessage::new()
-                        .embed(bj_embed(&player, &dealer, bet, "Double Down — stehe automatisch."))
+                        .embed(bj_embed(&player, &dealer, bet, "Double Down: stehe automatisch."))
                         .components(vec![]),
                 )).await.ok();
                 break;
@@ -400,11 +400,11 @@ pub async fn blackjack(
     let dealer_val = hand_total(&dealer);
 
     let (title, multiplier, won, color) = if dealer_val > 21 {
-        ("Dealer bust — du gewinnst!", 2.0, true, 0x57F287u32)
+        ("Dealer bust: du gewinnst!", 2.0, true, 0x57F287u32)
     } else if player_val > dealer_val {
         ("Du gewinnst!", 2.0, true, 0x57F287u32)
     } else if player_val == dealer_val {
-        ("Unentschieden — Push!", 1.0, true, 0xFEE75Cu32)
+        ("Unentschieden: Push!", 1.0, true, 0xFEE75Cu32)
     } else {
         ("Dealer gewinnt.", 0.0, false, 0xED4245u32)
     };
@@ -414,7 +414,7 @@ pub async fn blackjack(
         crate::db::add_coins(pool, guild_id, user_id, 0).await;
         let new_bal = crate::db::get_coins(pool, guild_id, user_id).await;
         CreateEmbed::new()
-            .title(format!("🃏 Blackjack — {}", title))
+            .title(format!("🃏 Blackjack: {}", title))
             .description(format!(
                 "Deine Hand: **{}** ({})\nDealer: **{}** ({})\n\nEinsatz zurück. Kontostand: **{} Coins**",
                 hand_str(&player), player_val, hand_str(&dealer), dealer_val, new_bal,
@@ -423,7 +423,7 @@ pub async fn blackjack(
     } else if won {
         let (new_bal, profit, bonus) = pay_win(pool, guild_id, user_id, bet, multiplier).await;
         CreateEmbed::new()
-            .title(format!("🃏 Blackjack — {}", title))
+            .title(format!("🃏 Blackjack: {}", title))
             .description(format!(
                 "Deine Hand: **{}** ({})\nDealer: **{}** ({})\n\n**+{} Coins**!{}\nKontostand: **{} Coins**",
                 hand_str(&player), player_val, hand_str(&dealer), dealer_val,
@@ -433,7 +433,7 @@ pub async fn blackjack(
     } else {
         let (new_bal, consolation) = pay_loss(pool, guild_id, user_id, bet).await;
         CreateEmbed::new()
-            .title(format!("🃏 Blackjack — {}", title))
+            .title(format!("🃏 Blackjack: {}", title))
             .description(format!(
                 "Deine Hand: **{}** ({})\nDealer: **{}** ({})\n\n**-{} Coins**\nKontostand: **{} Coins**{}",
                 hand_str(&player), player_val, hand_str(&dealer), dealer_val,
@@ -450,11 +450,11 @@ pub async fn blackjack(
 
 #[derive(Debug, poise::ChoiceParameter)]
 pub enum WuerfelTipp {
-    #[name = "Hoch (8-12) — 1.8×"] Hoch,
-    #[name = "Niedrig (2-6) — 1.8×"] Niedrig,
+    #[name = "Hoch (8-12): 1.8×"] Hoch,
+    #[name = "Niedrig (2-6): 1.8×"] Niedrig,
 }
 
-/// Zwei Würfel — tippe auf Hoch oder Niedrig.
+/// Zwei Würfel: tippe auf Hoch oder Niedrig.
 #[poise::command(slash_command, guild_only, rename = "wuerfeln")]
 pub async fn wuerfeln(
     ctx: Context<'_>,
@@ -509,7 +509,7 @@ pub enum MuenzSeite {
     #[name = "Zahl"] Zahl,
 }
 
-/// Münzwurf — 50/50, zahlt 1.9×.
+/// Münzwurf: 50/50, zahlt 1.9×.
 #[poise::command(slash_command, guild_only, rename = "muenzwurf")]
 pub async fn muenzwurf(
     ctx: Context<'_>,
@@ -567,7 +567,7 @@ pub enum RouletteWette {
     #[name = "Zahl 0-36 (35×)"]     Zahl,
 }
 
-/// Roulette — tippe auf Farbe, Gerade/Ungerade, Dutzend oder eine Zahl.
+/// Roulette: tippe auf Farbe, Gerade/Ungerade, Dutzend oder eine Zahl.
 #[poise::command(slash_command, guild_only, rename = "roulette")]
 pub async fn roulette(
     ctx: Context<'_>,
@@ -639,7 +639,7 @@ pub async fn roulette(
 
 static HOL_MULTIPLIERS: &[f64] = &[1.5, 2.0, 3.0, 5.0, 8.0];
 
-/// Höher oder Tiefer — kette Treffer für wachsende Multiplikatoren.
+/// Höher oder Tiefer: kette Treffer für wachsende Multiplikatoren.
 #[poise::command(slash_command, guild_only, rename = "kartenspiel")]
 pub async fn kartenspiel(
     ctx: Context<'_>,
@@ -726,7 +726,7 @@ pub async fn kartenspiel(
                 CreateInteractionResponseMessage::new()
                     .embed(CreateEmbed::new()
                         .title("🎴 Falsch!")
-                        .description(format!("Nächste Karte war **{}** — falsch geraten!\n\n**-{} Coins**", card_str(next), einsatz))
+                        .description(format!("Nächste Karte war **{}**: falsch geraten!\n\n**-{} Coins**", card_str(next), einsatz))
                         .color(0xED4245u32))
                     .components(vec![]),
             )).await.ok();
@@ -743,13 +743,13 @@ pub async fn kartenspiel(
         round  += 1;
 
         if round >= HOL_MULTIPLIERS.len() {
-            // Max rounds reached — auto cash out
+            // Max rounds reached: auto cash out
             let mult = *HOL_MULTIPLIERS.last().unwrap();
             interaction.create_response(ctx.http(), CreateInteractionResponse::UpdateMessage(
                 CreateInteractionResponseMessage::new()
                     .embed(CreateEmbed::new()
                         .title("🎴 Maximum erreicht!")
-                        .description(format!("Nächste Karte war **{}** — korrekt!\nMaximale Runden erreicht!", card_str(current)))
+                        .description(format!("Nächste Karte war **{}**: korrekt!\nMaximale Runden erreicht!", card_str(current)))
                         .color(0xFFD700u32))
                     .components(vec![]),
             )).await.ok();
@@ -848,7 +848,7 @@ pub async fn run_lotto_drawing(ctx: &serenity::Context, pool: &sqlx::SqlitePool)
     for (guild_id, drawing) in active {
         let tickets = crate::db::get_lotto_tickets(pool, drawing.id).await;
         if tickets.is_empty() {
-            // No tickets — just close and create new
+            // No tickets: just close and create new
             crate::db::close_lotto_drawing(pool, drawing.id, &[]).await;
             continue;
         }
@@ -887,26 +887,26 @@ pub async fn run_lotto_drawing(ctx: &serenity::Context, pool: &sqlx::SqlitePool)
         };
 
         if winners_6.is_empty() {
-            desc.push_str(&format!("🎯 6 Treffer: niemand — Jackpot rollt weiter!\n"));
+            desc.push_str(&format!("🎯 6 Treffer: niemand: Jackpot rollt weiter!\n"));
         } else {
             let share = drawing.jackpot / winners_6.len() as i64;
             let mentions: Vec<String> = winners_6.iter().map(|u| format!("<@{}>", u)).collect();
-            desc.push_str(&format!("🏆 6 Treffer: {} — **{} Coins** (Jackpot)!\n", mentions.join(", "), share));
+            desc.push_str(&format!("🏆 6 Treffer: {}: **{} Coins** (Jackpot)!\n", mentions.join(", "), share));
             pay_winners(&winners_6, share, pool, guild_id).await;
         }
         if !winners_5.is_empty() {
             let mentions: Vec<String> = winners_5.iter().map(|u| format!("<@{}>", u)).collect();
-            desc.push_str(&format!("🥇 5 Treffer: {} — **10.000 Coins**!\n", mentions.join(", ")));
+            desc.push_str(&format!("🥇 5 Treffer: {}: **10.000 Coins**!\n", mentions.join(", ")));
             pay_winners(&winners_5, 10_000, pool, guild_id).await;
         }
         if !winners_4.is_empty() {
             let mentions: Vec<String> = winners_4.iter().map(|u| format!("<@{}>", u)).collect();
-            desc.push_str(&format!("🥈 4 Treffer: {} — **1.000 Coins**\n", mentions.join(", ")));
+            desc.push_str(&format!("🥈 4 Treffer: {}: **1.000 Coins**\n", mentions.join(", ")));
             pay_winners(&winners_4, 1_000, pool, guild_id).await;
         }
         if !winners_3.is_empty() {
             let mentions: Vec<String> = winners_3.iter().map(|u| format!("<@{}>", u)).collect();
-            desc.push_str(&format!("🥉 3 Treffer: {} — **200 Coins**\n", mentions.join(", ")));
+            desc.push_str(&format!("🥉 3 Treffer: {}: **200 Coins**\n", mentions.join(", ")));
             pay_winners(&winners_3, 200, pool, guild_id).await;
         }
         if winners_3.is_empty() && winners_4.is_empty() && winners_5.is_empty() && winners_6.is_empty() {
@@ -963,12 +963,12 @@ pub async fn casino_stats(
     let win_rate = if stats.games_played > 0 {
         format!("{:.1}%", stats.total_won as f64 / stats.games_played as f64 * 100.0)
     } else {
-        "—".to_string()
+        "N/A".to_string()
     };
 
     ctx.send(poise::CreateReply::default().embed(
         CreateEmbed::new()
-            .title(format!("🎰 Casino-Stats — {}", target.name))
+            .title(format!("🎰 Casino-Stats: {}", target.name))
             .field("Gesamt gesetzt",   format!("{} Coins", stats.total_wagered), true)
             .field("Gesamt gewonnen",  format!("{} Coins", stats.total_won),     true)
             .field("Gesamt verloren",  format!("{} Coins", stats.total_lost),    true)
@@ -1000,7 +1000,7 @@ pub async fn casino_rangliste(ctx: Context<'_>) -> Result<(), Error> {
 
     let lines: Vec<String> = board.iter().enumerate().map(|(i, (uid, s))| {
         let medal = match i { 0 => "🥇", 1 => "🥈", 2 => "🥉", _ => "▪️" };
-        format!("{} <@{}> — **{} Coins** gewonnen ({} Spiele)", medal, uid, s.total_won, s.games_played)
+        format!("{} <@{}>: **{} Coins** gewonnen ({} Spiele)", medal, uid, s.total_won, s.games_played)
     }).collect();
 
     ctx.send(poise::CreateReply::default().embed(

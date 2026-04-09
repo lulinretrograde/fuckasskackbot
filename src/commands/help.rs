@@ -8,7 +8,7 @@ pub async fn help(ctx: Context<'_>) -> Result<(), Error> {
         poise::CreateReply::default()
             .embed(
                 CreateEmbed::new()
-                    .title("Unit8200 — Hilfe")
+                    .title("Unit8200: Hilfe")
                     .description("Alle Befehle, Logs und Infos findest du auf der Website:\n\n**https://bot.pawjobs.net**")
                     .color(0x5865F2u32),
             )

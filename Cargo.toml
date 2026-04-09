@@ -1,6 +1,6 @@
 [package]
 name = "idf-soldat"
-version = "3.3.5"
+version = "3.5.1"
 edition = "2021"
 
 [[bin]]

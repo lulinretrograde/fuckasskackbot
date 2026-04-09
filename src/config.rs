@@ -73,3 +73,21 @@ pub enum ActionKind {
 pub type NukeCounters = Arc<Mutex<HashMap<(GuildId, UserId, ActionKind), VecDeque<Instant>>>>;
 pub type RaidCounters = Arc<Mutex<HashMap<GuildId, VecDeque<(Instant, UserId)>>>>;
 pub type LockdownState = Arc<Mutex<HashMap<GuildId, Instant>>>;
+
+// ── bug report cooldowns (user → last report time) ────────────────────────────
+
+/// One report per user per 10 minutes.
+pub const BUG_COOLDOWN_SECS: u64 = 600;
+pub type BugCooldowns = Arc<Mutex<HashMap<UserId, Instant>>>;
+
+// ── ticket reply awaiting state ───────────────────────────────────────────────
+
+#[derive(Clone)]
+pub enum TicketAction {
+    Resolve,
+    Decline,
+    ChannelCloseResolve,
+}
+
+/// Owner user ID → (ticket_id, action) waiting for a DM reply to use as message body.
+pub type AwaitingTicketReply = Arc<Mutex<HashMap<UserId, (i64, TicketAction)>>>;

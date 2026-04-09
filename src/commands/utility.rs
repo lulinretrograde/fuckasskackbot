@@ -1,4 +1,6 @@
+use std::time::Instant;
 use poise::serenity_prelude as serenity;
+use serenity::{CreateActionRow, CreateButton, CreateEmbed, CreateMessage};
 use crate::{Context, Error};
 
 // ── emoji parsing ─────────────────────────────────────────────────────────────
@@ -185,5 +187,129 @@ pub async fn stealsticker(
         Err(e) => { ctx.say(format!("❌ Fehler: {}", e)).await?; }
     }
 
+    Ok(())
+}
+
+// ── /bug + ticket system ─────────────────────────────────────────────────────
+
+pub const OWNER_ID: u64 = 598134897265082398;
+
+/// Einen Bug oder ein Problem melden.
+#[poise::command(slash_command, rename = "bug")]
+pub async fn bug(
+    ctx: Context<'_>,
+    #[description = "Beschreibe den Bug so genau wie möglich"]
+    erklärung: String,
+) -> Result<(), Error> {
+    let user = ctx.author();
+    let is_owner = user.id.get() == OWNER_ID;
+
+    // Rate limit (owner exempt)
+    if !is_owner {
+        let mut cooldowns = ctx.data().bug_cooldowns.lock().await;
+        if let Some(&last) = cooldowns.get(&user.id) {
+            let elapsed = last.elapsed().as_secs();
+            if elapsed < crate::config::BUG_COOLDOWN_SECS {
+                let remaining = crate::config::BUG_COOLDOWN_SECS - elapsed;
+                ctx.send(
+                    poise::CreateReply::default()
+                        .content(format!(
+                            "❌ Du hast bereits einen Bug gemeldet. Bitte warte noch **{} Sekunden**.",
+                            remaining
+                        ))
+                        .ephemeral(true),
+                ).await?;
+                return Ok(());
+            }
+        }
+        cooldowns.insert(user.id, Instant::now());
+    }
+
+    let guild_id = ctx.guild_id().map(|g| g.get()).unwrap_or(0);
+    let reward   = crate::db::get_ticket_reward(&ctx.data().db).await;
+
+    // Create ticket in DB
+    let ticket_id = crate::db::insert_ticket(
+        &ctx.data().db, user.id, guild_id, &erklärung, reward,
+    ).await;
+
+    // DM owner
+    let owner = serenity::UserId::new(OWNER_ID);
+    let Ok(dm_ch) = owner.create_dm_channel(ctx.http()).await else {
+        ctx.send(poise::CreateReply::default()
+            .content("❌ Der Report konnte nicht gesendet werden. Bitte versuche es später erneut.")
+            .ephemeral(true)).await?;
+        return Ok(());
+    };
+
+    let guild_label = if guild_id != 0 {
+        format!("Server `{}`", guild_id)
+    } else {
+        "DM".to_string()
+    };
+
+    let embed = CreateEmbed::new()
+        .title(format!("🐛 Ticket #{}", ticket_id))
+        .description(&erklärung)
+        .field("Reporter", format!("<@{}> (`{}`)", user.id, user.name), true)
+        .field("Herkunft", guild_label, true)
+        .field("Status", "🟡 Offen", true)
+        .color(0xFEE75Cu32);
+
+    let channel_disabled = guild_id == 0;
+    let msg = dm_ch.send_message(ctx.http(), CreateMessage::new()
+        .embed(embed)
+        .components(vec![CreateActionRow::Buttons(vec![
+            CreateButton::new(format!("tr_{}", ticket_id))
+                .label(format!("✅ Erledigt (+{} Coins)", reward))
+                .style(serenity::ButtonStyle::Success),
+            CreateButton::new(format!("td_{}", ticket_id))
+                .label("❌ Ablehnen")
+                .style(serenity::ButtonStyle::Danger),
+            CreateButton::new(format!("tc_{}", ticket_id))
+                .label("💬 Kanal erstellen")
+                .style(serenity::ButtonStyle::Primary)
+                .disabled(channel_disabled),
+        ])])
+    ).await?;
+
+    crate::db::update_ticket_dm(
+        &ctx.data().db, ticket_id,
+        dm_ch.id.get() as i64,
+        msg.id.get() as i64,
+    ).await;
+
+    ctx.send(poise::CreateReply::default()
+        .content(
+            "✅ **Dein Bug-Report wurde eingereicht.**\n\n\
+            Der Entwickler wurde benachrichtigt und prüft dein Ticket. \
+            Du wirst per DM informiert sobald eine Entscheidung getroffen wurde.\n\n\
+            **Mögliche Ausgänge:**\n\
+            - **Erledigt**: der Bug wurde behoben, du erhältst eine Belohnung in Coins\n\
+            - **Abgelehnt**: der Report wurde nicht als Bug eingestuft\n\
+            - **Kanal**: ein privater Kanal wird für euch erstellt um den Bug gemeinsam zu besprechen"
+        )
+        .ephemeral(true),
+    ).await?;
+
+    Ok(())
+}
+
+/// Coin-Belohnung für erledigte Bug-Tickets setzen.
+#[poise::command(slash_command, rename = "ticket-reward")]
+pub async fn ticket_reward(
+    ctx: Context<'_>,
+    #[description = "Neue Belohnung in Coins"] amount: i64,
+) -> Result<(), Error> {
+    if ctx.author().id.get() != OWNER_ID {
+        ctx.send(poise::CreateReply::default()
+            .content("❌ Nur der Bot-Entwickler kann das ändern.")
+            .ephemeral(true)).await?;
+        return Ok(());
+    }
+    crate::db::set_ticket_reward(&ctx.data().db, amount).await;
+    ctx.send(poise::CreateReply::default()
+        .content(format!("✅ Ticket-Belohnung auf **{} Coins** gesetzt.", amount))
+        .ephemeral(true)).await?;
     Ok(())
 }

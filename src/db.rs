@@ -427,6 +427,34 @@ pub async fn init() -> SqlitePool {
     .await
     .expect("loot_drops Tabelle erstellen fehlgeschlagen");
 
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS tickets (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            reporter_id         INTEGER NOT NULL,
+            guild_id            INTEGER NOT NULL,
+            description         TEXT NOT NULL,
+            status              TEXT NOT NULL DEFAULT 'open',
+            owner_dm_channel_id INTEGER,
+            owner_dm_message_id INTEGER,
+            ticket_channel_id   INTEGER,
+            reward              INTEGER NOT NULL DEFAULT 600,
+            created_at          INTEGER NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .expect("tickets Tabelle erstellen fehlgeschlagen");
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS ticket_config (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )",
+    )
+    .execute(&pool)
+    .await
+    .expect("ticket_config Tabelle erstellen fehlgeschlagen");
+
     pool
 }
 
@@ -898,7 +926,7 @@ pub async fn add_to_bank(pool: &SqlitePool, guild_id: GuildId, amount: i64) {
     if let Err(e) = r { tracing::error!("Bank-Einzahlung fehlgeschlagen: {e}"); }
 }
 
-/// Drains the bank to zero and returns what was in it. Atomic — safe against concurrent robberies.
+/// Drains the bank to zero and returns what was in it. Atomic: safe against concurrent robberies.
 pub async fn drain_bank(pool: &SqlitePool, guild_id: GuildId) -> i64 {
     sqlx::query_scalar::<_, i64>(
         "UPDATE bank SET coins = 0 WHERE guild_id = ? RETURNING coins",
@@ -1371,7 +1399,7 @@ pub async fn end_giveaway(pool: &SqlitePool, giveaway_id: i64, winner_id: Option
     .await;
 }
 
-/// Returns all active (not yet ended) giveaways — used to reschedule on restart.
+/// Returns all active (not yet ended) giveaways: used to reschedule on restart.
 pub async fn get_active_giveaways(pool: &SqlitePool) -> Vec<GiveawayRow> {
     let rows = sqlx::query(
         "SELECT id, guild_id, channel_id, message_id, prize, ticket_price, required_level, ends_at
@@ -2084,4 +2112,114 @@ pub async fn get_antinuke_whitelist(pool: &SqlitePool, guild_id: GuildId) -> Vec
     .into_iter()
     .map(|v| UserId::new(v as u64))
     .collect()
+}
+
+// ── tickets ───────────────────────────────────────────────────────────────────
+
+pub struct TicketRow {
+    pub id:                  i64,
+    pub reporter_id:         i64,
+    pub guild_id:            i64,
+    pub description:         String,
+    pub status:              String,
+    pub owner_dm_channel_id: Option<i64>,
+    pub owner_dm_message_id: Option<i64>,
+    pub ticket_channel_id:   Option<i64>,
+    pub reward:              i64,
+}
+
+pub async fn insert_ticket(
+    pool:        &SqlitePool,
+    reporter_id: UserId,
+    guild_id:    u64,
+    description: &str,
+    reward:      i64,
+) -> i64 {
+    let now = chrono::Utc::now().timestamp();
+    sqlx::query(
+        "INSERT INTO tickets (reporter_id, guild_id, description, reward, created_at)
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(reporter_id.get() as i64)
+    .bind(guild_id as i64)
+    .bind(description)
+    .bind(reward)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map(|r| r.last_insert_rowid())
+    .unwrap_or(0)
+}
+
+pub async fn get_ticket(pool: &SqlitePool, id: i64) -> Option<TicketRow> {
+    let row = sqlx::query(
+        "SELECT id, reporter_id, guild_id, description, status,
+                owner_dm_channel_id, owner_dm_message_id, ticket_channel_id, reward
+         FROM tickets WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .ok()??;
+
+    Some(TicketRow {
+        id:                  row.get("id"),
+        reporter_id:         row.get("reporter_id"),
+        guild_id:            row.get("guild_id"),
+        description:         row.get("description"),
+        status:              row.get("status"),
+        owner_dm_channel_id: row.get("owner_dm_channel_id"),
+        owner_dm_message_id: row.get("owner_dm_message_id"),
+        ticket_channel_id:   row.get("ticket_channel_id"),
+        reward:              row.get("reward"),
+    })
+}
+
+pub async fn update_ticket_status(pool: &SqlitePool, id: i64, status: &str) {
+    let _ = sqlx::query("UPDATE tickets SET status = ? WHERE id = ?")
+        .bind(status)
+        .bind(id)
+        .execute(pool)
+        .await;
+}
+
+pub async fn update_ticket_dm(pool: &SqlitePool, id: i64, dm_channel_id: i64, dm_message_id: i64) {
+    let _ = sqlx::query(
+        "UPDATE tickets SET owner_dm_channel_id = ?, owner_dm_message_id = ? WHERE id = ?",
+    )
+    .bind(dm_channel_id)
+    .bind(dm_message_id)
+    .bind(id)
+    .execute(pool)
+    .await;
+}
+
+pub async fn update_ticket_channel(pool: &SqlitePool, id: i64, channel_id: i64) {
+    let _ = sqlx::query(
+        "UPDATE tickets SET ticket_channel_id = ?, status = 'channel' WHERE id = ?",
+    )
+    .bind(channel_id)
+    .bind(id)
+    .execute(pool)
+    .await;
+}
+
+pub async fn get_ticket_reward(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar::<_, String>("SELECT value FROM ticket_config WHERE key = 'reward'")
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(600)
+}
+
+pub async fn set_ticket_reward(pool: &SqlitePool, amount: i64) {
+    let _ = sqlx::query(
+        "INSERT INTO ticket_config (key, value) VALUES ('reward', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(amount.to_string())
+    .execute(pool)
+    .await;
 }

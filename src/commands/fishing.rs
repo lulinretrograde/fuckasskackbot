@@ -205,7 +205,7 @@ pub async fn angeln(ctx: Context<'_>) -> Result<(), Error> {
 
 const PAGE_SIZE: usize = 5;
 
-/// Dein Fischinventar anzeigen — blätterbar mit Buttons.
+/// Dein Fischinventar anzeigen: blätterbar mit Buttons.
 #[poise::command(slash_command, guild_only, rename = "inventar")]
 pub async fn inventar(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
@@ -322,7 +322,7 @@ async fn build_page(
         String::new()
     };
     desc.push_str(&format!(
-        "**Seite {}/{}** — {} Fische insgesamt\n\n",
+        "**Seite {}/{}**: {} Fische insgesamt\n\n",
         page + 1, total_pages, entries.len()
     ));
 
@@ -334,7 +334,7 @@ async fn build_page(
             ("❓", entry.fish_id.clone(), 0)
         };
         desc.push_str(&format!(
-            "{} **{}** — {} Coins *(gefangen <t:{}:R>)*\n",
+            "{} **{}**: {} Coins *(gefangen <t:{}:R>)*\n",
             emoji, name, price, entry.caught_at,
         ));
         sell_buttons.push(
@@ -400,7 +400,7 @@ pub async fn alles_verkaufen(ctx: Context<'_>) -> Result<(), Error> {
         if let Some(fish) = find_fish(&entry.fish_id) {
             let price = current_price(pool, fish).await;
             total_coins += price;
-            sold_lines.push(format!("{} {} — {} Coins", fish.emoji, fish.name, price));
+            sold_lines.push(format!("{} {}: {} Coins", fish.emoji, fish.name, price));
         }
     }
 
@@ -440,14 +440,14 @@ pub async fn fischmarkt(ctx: Context<'_>) -> Result<(), Error> {
         let price = current_price(pool, fish).await;
         let trend = if price > fish.base_price { "📈" } else if price < fish.base_price { "📉" } else { "➡️" };
         lines.push(format!(
-            "{} {} **{}** — {} Coins",
+            "{} {} **{}**: {} Coins",
             trend, fish.emoji, fish.name, price,
         ));
     }
 
     ctx.send(poise::CreateReply::default().embed(
         CreateEmbed::new()
-            .title("🐟 Fischmarkt — Aktuelle Preise")
+            .title("🐟 Fischmarkt: Aktuelle Preise")
             .description(lines.join("\n"))
             .color(0x5865F2u32)
             .footer(CreateEmbedFooter::new("Preise ändern sich stündlich")),
@@ -482,7 +482,7 @@ pub async fn angelshop(ctx: Context<'_>) -> Result<(), Error> {
             format!("{} Coins", rod.price)
         };
         lines.push(format!(
-            "{} **{}** — {}\n{}\n*{}*",
+            "{} **{}**: {}\n{}\n*{}*",
             rod.emoji, rod.name, price_str, rod.desc, status,
         ));
     }

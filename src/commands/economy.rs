@@ -259,7 +259,7 @@ pub async fn arbeit(ctx: Context<'_>) -> Result<(), Error> {
 
     let mut embed = CreateEmbed::new()
         .author(serenity::CreateEmbedAuthor::new(user.tag()).icon_url(user.face()))
-        .title(format!("💼 {} — {}", label, tier_label))
+        .title(format!("💼 {}: {}", label, tier_label))
         .description(response)
         .color(0x57F287u32)
         .field(
@@ -379,7 +379,7 @@ pub async fn klauen(
                 .author(serenity::CreateEmbedAuthor::new(dieb.tag()).icon_url(dieb.face()))
                 .title("🔒 Diebstahlschutz aktiv!")
                 .description(format!(
-                    "<@{}> hat einen **Diebstahlschutz** aktiv — dein Diebstahl wurde automatisch blockiert!",
+                    "<@{}> hat einen **Diebstahlschutz** aktiv: dein Diebstahl wurde automatisch blockiert!",
                     opfer.id
                 ))
                 .color(0xED4245u32),
