@@ -260,18 +260,48 @@ async fn main() {
                     db::get_all_log_configs(&pool).await.into_iter().collect();
                 tracing::info!("Log-Konfigurationen geladen: {} Server", config_data.len());
 
+                let xp_cooldowns:  XpCooldowns  = Arc::new(Mutex::new(HashMap::new()));
+                let nuke_counters: NukeCounters  = Arc::new(Mutex::new(HashMap::new()));
+                let raid_counters: RaidCounters  = Arc::new(Mutex::new(HashMap::new()));
+                let bug_cooldowns: BugCooldowns  = Arc::new(Mutex::new(HashMap::new()));
+
+                // Periodic cleanup: drop expired entries from in-memory maps every 10 minutes
+                {
+                    let xp_cd  = xp_cooldowns.clone();
+                    let bug_cd = bug_cooldowns.clone();
+                    let nuke   = nuke_counters.clone();
+                    let raid   = raid_counters.clone();
+                    tokio::spawn(async move {
+                        loop {
+                            tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+                            xp_cd.lock().await.retain(|_, t: &mut std::time::Instant| {
+                                t.elapsed().as_secs() < crate::xp::XP_COOLDOWN_SECS
+                            });
+                            bug_cd.lock().await.retain(|_, t: &mut std::time::Instant| {
+                                t.elapsed().as_secs() < config::BUG_COOLDOWN_SECS
+                            });
+                            nuke.lock().await.retain(|_, deque: &mut std::collections::VecDeque<std::time::Instant>| {
+                                !deque.is_empty()
+                            });
+                            raid.lock().await.retain(|_, deque: &mut std::collections::VecDeque<(std::time::Instant, _)>| {
+                                !deque.is_empty()
+                            });
+                        }
+                    });
+                }
+
                 Ok(AppData {
                     db: pool,
                     log_configs:        Arc::new(Mutex::new(config_data)),
                     join_tracker:       Arc::new(Mutex::new(HashMap::new())),
                     message_cache:      Arc::new(Mutex::new((HashMap::new(), VecDeque::new()))),
-                    xp_cooldowns:       Arc::new(Mutex::new(HashMap::new())),
+                    xp_cooldowns,
                     invite_cache:       Arc::new(Mutex::new(HashMap::new())),
                     voice_sessions,
-                    nuke_counters:      Arc::new(Mutex::new(HashMap::new())),
-                    raid_counters:      Arc::new(Mutex::new(HashMap::new())),
+                    nuke_counters,
+                    raid_counters,
                     lockdown_state:     Arc::new(Mutex::new(HashMap::new())),
-                    bug_cooldowns:          Arc::new(Mutex::new(HashMap::new())),
+                    bug_cooldowns,
                     awaiting_ticket_reply:  Arc::new(Mutex::new(HashMap::new())),
                 })
             })
