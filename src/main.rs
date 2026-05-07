@@ -45,10 +45,19 @@ pub struct AppData {
 /// The returned listener must stay alive for the entire process lifetime:
 /// dropping it releases the lock and lets the next instance proceed.
 fn acquire_instance_lock() -> std::net::TcpListener {
+    let mut attempts = 0u32;
     loop {
         match std::net::TcpListener::bind("127.0.0.1:27016") {
             Ok(l) => return l,
-            Err(_) => std::thread::sleep(std::time::Duration::from_millis(500)),
+            Err(_) => {
+                if attempts == 0 {
+                    eprintln!("[idf-soldat] Waiting for previous instance to release lock (port 27016)...");
+                } else if attempts % 20 == 0 {
+                    eprintln!("[idf-soldat] Still waiting for instance lock ({} seconds elapsed)...", attempts / 2);
+                }
+                attempts += 1;
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
         }
     }
 }
@@ -223,7 +232,7 @@ async fn main() {
                             tokio::time::sleep(std::time::Duration::from_secs(300)).await;
 
                             let entries: Vec<_> = {
-                                vs.lock().await.keys().cloned().collect()
+                                vs.lock().await.keys().copied().collect()
                             };
 
                             for (guild_id, user_id) in entries {
