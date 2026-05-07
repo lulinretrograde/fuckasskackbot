@@ -233,12 +233,11 @@ async fn main() {
                                 ).await;
                                 let xp_gain: u64 = if has_booster { 20 } else { 10 };
 
-                                let old_xp  = crate::db::get_xp(&pool_bg, guild_id, user_id).await;
+                                let credited = crate::db::get_credited_level(&pool_bg, guild_id, user_id).await;
                                 let new_xp  = crate::db::add_xp(&pool_bg, guild_id, user_id, xp_gain).await;
-                                let old_lvl = crate::xp::level_from_xp(old_xp);
                                 let new_lvl = crate::xp::level_from_xp(new_xp);
 
-                                if new_lvl > old_lvl && old_lvl < 50 {
+                                if new_lvl > credited && credited < 50 {
                                     let reward = (new_lvl * 100) as i64;
                                     crate::db::add_coins(&pool_bg, guild_id, user_id, reward).await;
                                     crate::db::set_credited_level(&pool_bg, guild_id, user_id, new_lvl).await;

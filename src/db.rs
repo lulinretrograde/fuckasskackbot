@@ -1933,7 +1933,7 @@ pub async fn get_credited_level(pool: &SqlitePool, guild_id: GuildId, user_id: U
 pub async fn set_credited_level(pool: &SqlitePool, guild_id: GuildId, user_id: UserId, level: u64) {
     let _ = sqlx::query(
         "INSERT INTO level_coins_credited (guild_id, user_id, credited_level) VALUES (?, ?, ?)
-         ON CONFLICT(guild_id, user_id) DO UPDATE SET credited_level = excluded.credited_level",
+         ON CONFLICT(guild_id, user_id) DO UPDATE SET credited_level = MAX(credited_level, excluded.credited_level)",
     )
     .bind(guild_id.get() as i64)
     .bind(user_id.get() as i64)

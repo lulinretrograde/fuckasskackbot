@@ -145,12 +145,11 @@ pub async fn handle(
                                 let base_xp = 15 + (new_message.id.get() % 11) as u64;
                                 let xp_gain = if has_booster { base_xp * 2 } else { base_xp };
 
-                                let old_xp    = crate::db::get_xp(&data.db, guild_id, user_id).await;
+                                let credited  = crate::db::get_credited_level(&data.db, guild_id, user_id).await;
                                 let new_xp    = crate::db::add_xp(&data.db, guild_id, user_id, xp_gain).await;
-                                let old_level = level_from_xp(old_xp);
                                 let new_level = level_from_xp(new_xp);
 
-                                if new_level > old_level && old_level < 50 {
+                                if new_level > credited && credited < 50 {
                                     let reward = (new_level * 100) as i64;
                                     crate::db::add_coins(&data.db, guild_id, user_id, reward).await;
                                     crate::db::set_credited_level(&data.db, guild_id, user_id, new_level).await;
