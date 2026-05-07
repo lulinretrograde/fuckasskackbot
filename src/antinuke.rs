@@ -81,8 +81,8 @@ pub async fn record_action(
         let mut counters = data.nuke_counters.lock().await;
         let key = (guild_id, actor_id, kind);
         let deque = counters.entry(key).or_default();
-        let cutoff = Instant::now().checked_sub(window).unwrap_or_else(Instant::now);
-        deque.retain(|&t| t > cutoff);
+        let cutoff = Instant::now().checked_sub(window);
+        deque.retain(|&t| cutoff.map_or(true, |c| t > c));
         deque.push_back(Instant::now());
         deque.len()
     };
@@ -196,10 +196,8 @@ pub async fn record_join(
     let (count, recent_joiners) = {
         let mut counters = data.raid_counters.lock().await;
         let deque = counters.entry(guild_id).or_default();
-        let cutoff = Instant::now()
-            .checked_sub(raid_window)
-            .unwrap_or_else(Instant::now);
-        deque.retain(|(t, _)| *t > cutoff);
+        let cutoff = Instant::now().checked_sub(raid_window);
+        deque.retain(|(t, _)| cutoff.map_or(true, |c| *t > c));
         deque.push_back((Instant::now(), user_id));
         let recent: Vec<UserId> = deque.iter().map(|(_, uid)| *uid).collect();
         (deque.len(), recent)
