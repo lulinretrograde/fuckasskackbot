@@ -1562,6 +1562,51 @@ pub async fn casino_vault_get(pool: &SqlitePool, guild_id: GuildId) -> i64 {
         .unwrap_or(0)
 }
 
+/// Moves `player_delta` coins to/from the player wallet and the opposite amount
+/// to/from the casino vault in a single transaction. Returns the player's new balance.
+pub async fn casino_transfer(
+    pool: &SqlitePool,
+    guild_id: GuildId,
+    user_id: UserId,
+    player_delta: i64,
+) -> i64 {
+    let result = async {
+        let mut tx = pool.begin().await?;
+
+        let new_balance: i64 = sqlx::query_scalar(
+            "INSERT INTO economy (guild_id, user_id, coins) VALUES (?, ?, ?)
+             ON CONFLICT(guild_id, user_id) DO UPDATE SET coins = MAX(coins + excluded.coins, 0)
+             RETURNING coins",
+        )
+        .bind(guild_id.get() as i64)
+        .bind(user_id.get() as i64)
+        .bind(player_delta)
+        .fetch_one(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO casino_vault (guild_id, balance) VALUES (?, ?)
+             ON CONFLICT(guild_id) DO UPDATE SET balance = balance + excluded.balance",
+        )
+        .bind(guild_id.get() as i64)
+        .bind(-player_delta)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        Ok::<i64, sqlx::Error>(new_balance)
+    }
+    .await;
+
+    match result {
+        Ok(bal) => bal,
+        Err(e) => {
+            tracing::error!("casino_transfer fehlgeschlagen: {e}");
+            0
+        }
+    }
+}
+
 pub async fn casino_vault_add(pool: &SqlitePool, guild_id: GuildId, amount: i64) -> i64 {
     sqlx::query_scalar::<_, i64>(
         "INSERT INTO casino_vault (guild_id, balance) VALUES (?, ?)

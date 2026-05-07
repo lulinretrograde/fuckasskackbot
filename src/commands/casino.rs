@@ -97,11 +97,8 @@ async fn pay_win(
     let gross  = if streak_bonus { (gross as f64 * 1.1) as i64 } else { gross };
     let profit = gross - bet;
 
-    crate::db::add_coins(pool, guild_id, user_id, profit).await;
-    crate::db::casino_vault_add(pool, guild_id, -profit).await;
+    let new_bal = crate::db::casino_transfer(pool, guild_id, user_id, profit).await;
     crate::db::update_casino_stats(pool, guild_id, user_id, bet, true, profit, gross).await;
-
-    let new_bal = crate::db::get_coins(pool, guild_id, user_id).await;
     (new_bal, profit, streak_bonus)
 }
 
@@ -112,8 +109,7 @@ async fn pay_loss(
     user_id:  serenity::UserId,
     bet:      i64,
 ) -> (i64, bool) {
-    crate::db::add_coins(pool, guild_id, user_id, -bet).await;
-    crate::db::casino_vault_add(pool, guild_id, bet).await;
+    crate::db::casino_transfer(pool, guild_id, user_id, -bet).await;
     crate::db::add_casino_daily_loss(pool, guild_id, user_id, bet).await;
     let (_, new_lose) = crate::db::update_casino_stats(pool, guild_id, user_id, bet, false, 0, 0).await;
 
