@@ -142,6 +142,7 @@ async fn main() {
                 commands::automod_cmd(),
                 commands::tempban(),
                 commands::notiz(),
+                commands::reaktionsrolle(),
                 commands::bug(),
                 commands::ticket_reward(),
             ],

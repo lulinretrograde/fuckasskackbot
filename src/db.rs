@@ -498,6 +498,21 @@ pub async fn init() -> SqlitePool {
     .await
     .expect("automod_config Tabelle erstellen fehlgeschlagen");
 
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS reaction_roles (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id   INTEGER NOT NULL,
+            channel_id INTEGER NOT NULL,
+            message_id INTEGER NOT NULL,
+            emoji      TEXT    NOT NULL,
+            role_id    INTEGER NOT NULL,
+            UNIQUE (message_id, emoji)
+        )",
+    )
+    .execute(&pool)
+    .await
+    .expect("reaction_roles Tabelle erstellen fehlgeschlagen");
+
     pool
 }
 
@@ -2473,4 +2488,84 @@ pub async fn save_automod_config(pool: &SqlitePool, guild_id: GuildId, cfg: &Aut
     .bind(cfg.log_channel.map(|c| c.get() as i64))
     .execute(pool)
     .await;
+}
+
+// ── reaction roles ─────────────────────────────────────────────────────────────
+
+pub struct ReactionRoleRow {
+    pub id:         i64,
+    pub channel_id: ChannelId,
+    pub message_id: serenity::MessageId,
+    pub emoji:      String,
+    pub role_id:    RoleId,
+}
+
+pub async fn add_reaction_role(
+    pool:       &SqlitePool,
+    guild_id:   GuildId,
+    channel_id: ChannelId,
+    message_id: serenity::MessageId,
+    emoji:      &str,
+    role_id:    RoleId,
+) -> bool {
+    sqlx::query(
+        "INSERT INTO reaction_roles (guild_id, channel_id, message_id, emoji, role_id)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(message_id, emoji) DO NOTHING",
+    )
+    .bind(guild_id.get() as i64)
+    .bind(channel_id.get() as i64)
+    .bind(message_id.get() as i64)
+    .bind(emoji)
+    .bind(role_id.get() as i64)
+    .execute(pool)
+    .await
+    .map(|r| r.rows_affected() > 0)
+    .unwrap_or(false)
+}
+
+pub async fn remove_reaction_role(pool: &SqlitePool, id: i64, guild_id: GuildId) -> bool {
+    sqlx::query("DELETE FROM reaction_roles WHERE id = ? AND guild_id = ?")
+        .bind(id)
+        .bind(guild_id.get() as i64)
+        .execute(pool)
+        .await
+        .map(|r| r.rows_affected() > 0)
+        .unwrap_or(false)
+}
+
+pub async fn get_reaction_roles_for_guild(pool: &SqlitePool, guild_id: GuildId) -> Vec<ReactionRoleRow> {
+    sqlx::query(
+        "SELECT id, channel_id, message_id, emoji, role_id FROM reaction_roles WHERE guild_id = ? ORDER BY id",
+    )
+    .bind(guild_id.get() as i64)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r| ReactionRoleRow {
+        id:         r.get("id"),
+        channel_id: ChannelId::new(r.get::<i64, _>("channel_id") as u64),
+        message_id: serenity::MessageId::new(r.get::<i64, _>("message_id") as u64),
+        emoji:      r.get("emoji"),
+        role_id:    RoleId::new(r.get::<i64, _>("role_id") as u64),
+    })
+    .collect()
+}
+
+/// Returns the role ID bound to this (message, emoji) pair, or None.
+pub async fn get_reaction_role(
+    pool:       &SqlitePool,
+    message_id: serenity::MessageId,
+    emoji:      &str,
+) -> Option<RoleId> {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT role_id FROM reaction_roles WHERE message_id = ? AND emoji = ?",
+    )
+    .bind(message_id.get() as i64)
+    .bind(emoji)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or(None)
+    .map(|v| RoleId::new(v as u64))
 }

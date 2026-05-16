@@ -305,9 +305,11 @@ pub async fn handle(
         // ── reactions ────────────────────────────────────────────────────────
         serenity::FullEvent::ReactionAdd { add_reaction } => {
             reaction_log(ctx, data, add_reaction, true).await;
+            handle_reaction_role(ctx, data, add_reaction, true).await;
         }
         serenity::FullEvent::ReactionRemove { removed_reaction } => {
             reaction_log(ctx, data, removed_reaction, false).await;
+            handle_reaction_role(ctx, data, removed_reaction, false).await;
         }
 
         // ── threads ───────────────────────────────────────────────────────────
@@ -2311,6 +2313,38 @@ async fn handle_ticket_reply(
                 ticket_id, ticket.reward, ticket.reporter_id,
             )).await;
         }
+    }
+}
+
+// ── reaction roles ────────────────────────────────────────────────────────────
+
+async fn handle_reaction_role(
+    ctx:       &serenity::Context,
+    data:      &AppData,
+    reaction:  &serenity::Reaction,
+    add:       bool,
+) {
+    let Some(guild_id) = reaction.guild_id else { return };
+    let Some(user_id)  = reaction.user_id  else { return };
+
+    // Ignore bot reactions
+    if ctx.cache.current_user().id == user_id { return; }
+
+    let emoji_str = match &reaction.emoji {
+        serenity::ReactionType::Unicode(s)          => s.clone(),
+        serenity::ReactionType::Custom { id, name, .. } =>
+            format!("<:{}:{}>", name.as_deref().unwrap_or("e"), id),
+        _ => return,
+    };
+
+    let Some(role_id) = crate::db::get_reaction_role(&data.db, reaction.message_id, &emoji_str).await else {
+        return;
+    };
+
+    if add {
+        let _ = ctx.http.add_member_role(guild_id, user_id, role_id, Some("Reaktionsrolle")).await;
+    } else {
+        let _ = ctx.http.remove_member_role(guild_id, user_id, role_id, Some("Reaktionsrolle")).await;
     }
 }
 
