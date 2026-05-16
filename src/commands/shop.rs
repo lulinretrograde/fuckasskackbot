@@ -257,8 +257,8 @@ pub fn schedule_loot_drops(
 ) {
     tokio::spawn(async move {
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(1800)).await;
             spawn_loot_drop(&ctx, &pool).await;
+            tokio::time::sleep(std::time::Duration::from_secs(1800)).await;
         }
     });
 }
@@ -283,6 +283,8 @@ pub async fn restore_loot_drops(ctx: serenity::Context, pool: sqlx::SqlitePool) 
             });
         }
     }
+    // If any expired drops were cleaned up (or no live drop exists), post one now.
+    spawn_loot_drop(&ctx, &pool).await;
 }
 
 async fn expire_loot_drop(
